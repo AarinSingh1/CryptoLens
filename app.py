@@ -1,37 +1,87 @@
 import streamlit as st #streamlit = app layout/buttons/dropdowns/metrics
 
 import requests #requests = talks to CoinGecko API
- 
+
 import pandas as pd #pandas = cleans and analyzes tables
 
-import plotly.express as px  #plotly.express = creates interactive charts
-
+import plotly.graph_objects as go #plotly.graph_objects = creates interactive charts
 
 
 # This controls the browser tab title and page width
 st.set_page_config(
     page_title="CryptoLens",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# This sets the background to dark and adds a subtle border to metric cards
+st.markdown("""
+<style>
+.stApp { background-color: #0a0a0a; }
+[data-testid="metric-container"] {
+    background-color: #111;
+    border: 1px solid #222;
+    padding: 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # This is the main page title
 st.title("CryptoLens")
 
 # This is a short project description under the title
-st.write(
-    "A crypto analytics dashboard for price, momentum, volatility, drawdown, RSI, and volume."
-)
+st.caption("crypto analytics dashboard — price, momentum, volatility, drawdown, RSI, volume")
+
+
+# These are the color constants used across all charts
+PLOT_BG    = "#0a0a0a"
+PAPER_BG   = "#0a0a0a"
+GRID_COLOR = "#1c1c1c"
+TEXT_COLOR = "#e8e8e8"
+ACCENT     = "#c8f000"
+MUTED      = "#5a5a5a"
+
+
+# This applies the dark theme to any plotly figure
+def apply_dark_theme(fig, title=""):
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=13), x=0),
+        paper_bgcolor=PAPER_BG,
+        plot_bgcolor=PLOT_BG,
+        font=dict(color=TEXT_COLOR, size=11),
+        xaxis=dict(
+            gridcolor=GRID_COLOR,
+            linecolor=GRID_COLOR,
+            tickfont=dict(color=MUTED, size=10),
+            showgrid=True,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            gridcolor=GRID_COLOR,
+            linecolor=GRID_COLOR,
+            tickfont=dict(color=MUTED, size=10),
+            showgrid=True,
+            zeroline=False,
+        ),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor=GRID_COLOR,
+            font=dict(color=MUTED, size=10),
+        ),
+        margin=dict(l=8, r=8, t=48, b=8),
+        hovermode="x unified",
+    )
+    fig.update_traces(line=dict(width=1.4))
+    return fig
 
 
 # Left side = what the user sees
 # Right side = what CoinGecko needs in the API URL
 coins = {
-    "Bitcoin": "bitcoin",
+    "Bitcoin":  "bitcoin",
     "Ethereum": "ethereum",
-    "Solana": "solana"
+    "Solana":   "solana"
 }
-
-
 
 # Creates a dropdown in the sidebar
 # User sees Bitcoin/Ethereum/Solana
@@ -39,8 +89,6 @@ coin_name = st.sidebar.selectbox(
     "Choose a coin",
     list(coins.keys())
 )
-
-
 
 days = st.sidebar.selectbox(
     "Days of data",
@@ -50,8 +98,6 @@ days = st.sidebar.selectbox(
 
 # Example: "Bitcoin" -> "bitcoin"
 coin_id = coins[coin_name]
-
-
 
 
 @st.cache_data(ttl=300)
@@ -190,9 +236,7 @@ def add_analytics(df):
     return df
 
 
-# -------------------------
 # Signal functions
-# -------------------------
 
 def generate_signals(df):
     """
@@ -202,34 +246,34 @@ def generate_signals(df):
     # Get the most recent row
     latest = df.iloc[-1]
 
-    # Store text signals here
+    # Store signals here as (text, is_positive) tuples
     signals = []
 
     # Compare current price to short term moving average
     if latest["price"] > latest["ma_24h"]:
-        signals.append("Price above 24H moving average")
+        signals.append(("Price above 24H moving average", True))
     else:
-        signals.append("Price below 24H moving average")
+        signals.append(("Price below 24H moving average", False))
 
     # Interpret RSI
     if latest["rsi"] > 70:
-        signals.append("RSI overbought")
+        signals.append(("RSI overbought (>70)", False))
     elif latest["rsi"] < 30:
-        signals.append("RSI oversold")
+        signals.append(("RSI oversold (<30)", False))
     else:
-        signals.append("RSI neutral")
+        signals.append(("RSI neutral", True))
 
     # Compare current volatility to average volatility
     if latest["rolling_vol_24h"] > df["rolling_vol_24h"].mean():
-        signals.append("Volatility above average")
+        signals.append(("Volatility above average", False))
     else:
-        signals.append("Volatility below average")
+        signals.append(("Volatility below average", True))
 
     # Compare current volume to average volume
     if latest["volume"] > df["volume"].mean():
-        signals.append("Volume above average")
+        signals.append(("Volume above average", True))
     else:
-        signals.append("Volume below average")
+        signals.append(("Volume below average", False))
 
     return signals
 
@@ -242,95 +286,100 @@ def get_market_label(df):
     latest = df.iloc[-1]
 
     if latest["price"] > latest["ma_24h"] and latest["rsi"] < 70:
-        return "Bullish / healthy momentum"
+        return "BULLISH", "#c8f000"
 
     elif latest["price"] < latest["ma_24h"] and latest["rsi"] > 30:
-        return "Weak momentum"
+        return "WEAK", "#ff6b35"
 
     elif latest["rsi"] > 70:
-        return "Potentially overbought"
+        return "OVERBOUGHT", "#ff4444"
 
     elif latest["rsi"] < 30:
-        return "Potentially oversold"
+        return "OVERSOLD", "#00b8ff"
 
     else:
-        return "Neutral"
-
+        return "NEUTRAL", "#5a5a5a"
 
 
 # Chart functions
 
-
 def plot_price_chart(df, coin_name):
-    # Price chart with moving averages
-    fig = px.line(
-        df,
-        x="date",
-        y=["price", "ma_24h", "ma_7d"],
-        title=f"{coin_name} Price with Moving Averages"
-    )
-    return fig
+    # Price chart with moving averages overlaid as dotted lines
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["date"], y=df["price"],  name="Price",  line=dict(color=ACCENT,    width=1.6)))
+    fig.add_trace(go.Scatter(x=df["date"], y=df["ma_24h"], name="MA 24H", line=dict(color="#00b8ff", width=1.0, dash="dot")))
+    fig.add_trace(go.Scatter(x=df["date"], y=df["ma_7d"],  name="MA 7D",  line=dict(color="#ff6b35", width=1.0, dash="dash")))
+    return apply_dark_theme(fig, f"{coin_name} Price with Moving Averages")
 
 
 def plot_returns_chart(df, coin_name):
-    # Return chart shows percent move each period
-    fig = px.line(
-        df,
-        x="date",
-        y="return_percent",
-        title=f"{coin_name} Returns Over Time"
-    )
-    return fig
+    # Return chart colored green for positive, red for negative
+    colors = [ACCENT if v >= 0 else "#ff4444" for v in df["return_percent"]]
+    fig = go.Figure(go.Bar(
+        x=df["date"], y=df["return_percent"],
+        marker_color=colors, name="Return %",
+        marker_line_width=0
+    ))
+    return apply_dark_theme(fig, f"{coin_name} Returns Over Time")
 
 
 def plot_volatility_chart(df, coin_name):
-    # Volatility chart shows how jumpy returns are
-    fig = px.line(
-        df,
-        x="date",
-        y="rolling_vol_24h",
-        title=f"{coin_name} 24H Rolling Volatility"
-    )
-    return fig
+    # Volatility chart shows how jumpy returns are, filled to zero
+    fig = go.Figure(go.Scatter(
+        x=df["date"], y=df["rolling_vol_24h"],
+        fill="tozeroy",
+        fillcolor="rgba(200,240,0,0.06)",
+        line=dict(color=ACCENT, width=1.4),
+        name="24H Volatility"
+    ))
+    return apply_dark_theme(fig, f"{coin_name} 24H Rolling Volatility")
 
 
 def plot_drawdown_chart(df, coin_name):
     # Drawdown chart shows how far price is below its previous high
-    fig = px.line(
-        df,
-        x="date",
-        y="drawdown",
-        title=f"{coin_name} Drawdown"
-    )
-    return fig
+    fig = go.Figure(go.Scatter(
+        x=df["date"], y=df["drawdown"] * 100,
+        fill="tozeroy",
+        fillcolor="rgba(255,68,68,0.08)",
+        line=dict(color="#ff4444", width=1.4),
+        name="Drawdown %"
+    ))
+    return apply_dark_theme(fig, f"{coin_name} Drawdown")
 
 
 def plot_rsi_chart(df, coin_name):
     # RSI chart shows overbought/oversold momentum
-    fig = px.line(
-        df,
-        x="date",
-        y="rsi",
-        title=f"{coin_name} RSI"
-    )
+    # Shaded zones make it easier to read at a glance
+    fig = go.Figure()
+    fig.add_hrect(y0=70, y1=100, fillcolor="rgba(255,68,68,0.05)", line_width=0)
+    fig.add_hrect(y0=0,  y1=30,  fillcolor="rgba(0,184,255,0.05)", line_width=0)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["rsi"],
+        line=dict(color=ACCENT, width=1.4), name="RSI"
+    ))
 
     # Add RSI reference lines
-    fig.add_hline(y=70, line_dash="dash")
-    fig.add_hline(y=30, line_dash="dash")
+    fig.add_hline(y=70, line_dash="dot", line_color="#ff4444", line_width=0.8,
+                  annotation_text="70", annotation_font_color=MUTED, annotation_font_size=9)
+    fig.add_hline(y=30, line_dash="dot", line_color="#00b8ff", line_width=0.8,
+                  annotation_text="30", annotation_font_color=MUTED, annotation_font_size=9)
 
-    return fig
+    fig.update_layout(yaxis=dict(range=[0, 100]))
+    return apply_dark_theme(fig, f"{coin_name} RSI")
 
 
 def plot_volume_chart(df, coin_name):
     # Volume chart shows trading activity
-    fig = px.line(
-        df,
-        x="date",
-        y="volume",
-        title=f"{coin_name} Trading Volume"
-    )
-    return fig
-
+    # Bars above average are highlighted in accent color
+    avg = df["volume"].mean()
+    colors = [ACCENT if v >= avg else MUTED for v in df["volume"]]
+    fig = go.Figure(go.Bar(
+        x=df["date"], y=df["volume"],
+        marker_color=colors, name="Volume",
+        marker_line_width=0
+    ))
+    fig.add_hline(y=avg, line_dash="dot", line_color=MUTED, line_width=0.8)
+    return apply_dark_theme(fig, f"{coin_name} Trading Volume")
 
 
 df = get_coin_data(coin_id, days)
@@ -343,55 +392,27 @@ latest = df.iloc[-1]
 
 # Generate signals and market label
 signals = generate_signals(df)
-market_label = get_market_label(df)
+market_label, label_color = get_market_label(df)
 
 st.subheader(f"{coin_name} Dashboard")
-
 
 # Create four metric cards in one row
 col1, col2, col3, col4 = st.columns(4)
 
-
-
-
-#Show it as dollars, Use commas, Show 2 decimals:
-
-
-# Latest price
-col1.metric(
-    "Price",
-    f"${latest['price']:,.2f}"
-)
-
-# Latest RSI
-col2.metric(
-    "RSI",
-    f"{latest['rsi']:.2f}"
-)
-
-# Latest drawdown
-col3.metric(
-    "Drawdown",
-    f"{latest['drawdown'] * 100:.2f}%"
-)
-
-# Overall market label
-col4.metric(
-    "Market Label",
-    market_label
-)
-
+# Show it as dollars, use commas, show 2 decimals
+col1.metric("Price", f"${latest['price']:,.2f}")
+col2.metric("RSI", f"{latest['rsi']:.2f}")
+col3.metric("Drawdown", f"{latest['drawdown'] * 100:.2f}%")
+col4.metric("Market Label", market_label)
 
 # Display signals
 
-
 st.subheader("Signals")
 
-
-for signal in signals:
-    st.write(f"- {signal}") # Go through every item inside the signals list, one at a time, and display each one on the Streamlit app as a bullet point.
-
-
+# Go through every item in the signals list and display it with a color
+for label, positive in signals:
+    color = "green" if positive else "red"
+    st.markdown(f":{color}[- {label}]")
 
 
 st.plotly_chart(
@@ -404,15 +425,12 @@ st.plotly_chart(
     use_container_width=True
 )
 
-st.plotly_chart(
-    plot_volatility_chart(df, coin_name),
-    use_container_width=True
-)
-
-st.plotly_chart(
-    plot_drawdown_chart(df, coin_name),
-    use_container_width=True
-)
+# Volatility and drawdown side by side since they are related
+c1, c2 = st.columns(2)
+with c1:
+    st.plotly_chart(plot_volatility_chart(df, coin_name), use_container_width=True)
+with c2:
+    st.plotly_chart(plot_drawdown_chart(df, coin_name),   use_container_width=True)
 
 st.plotly_chart(
     plot_rsi_chart(df, coin_name),
@@ -424,10 +442,6 @@ st.plotly_chart(
     use_container_width=True
 )
 
-
 # Raw data table
 st.subheader("Raw Data")
 st.dataframe(df.tail(20))
-
-
-
