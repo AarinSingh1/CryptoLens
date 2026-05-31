@@ -42,13 +42,11 @@ coin_name = st.sidebar.selectbox(
 
 
 
-days = st.sidebar.slider(
+days = st.sidebar.selectbox(
     "Days of data",
-    7,
-    90,
-    30
+    [7, 30, 90],
+    index=1
 )
-
 
 # Example: "Bitcoin" -> "bitcoin"
 coin_id = coins[coin_name]
@@ -56,51 +54,52 @@ coin_id = coins[coin_name]
 
 
 
+@st.cache_data(ttl=300)
 def get_coin_data(coin_id="bitcoin", days=30):
     """
     Pulls historical price and volume data from CoinGecko.
-
-    Input:
-    coin_id = CoinGecko coin name, like "bitcoin"
-    days = how many days of historical data we want
-
-    Output:
-    DataFrame with date, price, and volume
+    Uses caching so we do not hit the API too many times.
     """
 
-    # This is the CoinGecko endpoint for historical chart data
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
 
-    # These are the URL parameters
-    # vs_currency means price is shown in USD
-    # days means how far back we want data
     params = {
         "vs_currency": "usd",
         "days": days
     }
 
-    # Send request to CoinGecko
     response = requests.get(url, params=params)
 
-    # Convert API response from JSON text into a Python dictionary
-    data = response.json()
+    # If CoinGecko gives a bad status code, stop cleanly
+    if response.status_code != 200:
+        st.error(f"CoinGecko API error: {response.status_code}")
+        st.write(response.text)
+        st.stop()
 
-    # Convert price data into a DataFrame
-    # CoinGecko gives prices as [timestamp, price]
+    # Try converting response to JSON
+    try:
+        data = response.json()
+    except Exception:
+        st.error("CoinGecko returned a response that was not valid JSON.")
+        st.write(response.text)
+        st.stop()
+
+    # Make sure the expected data exists
+    if "prices" not in data or "total_volumes" not in data:
+        st.error("CoinGecko response did not include price or volume data.")
+        st.write(data)
+        st.stop()
+
     price_df = pd.DataFrame(
         data["prices"],
         columns=["timestamp", "price"]
     )
 
-    # Convert volume data into a DataFrame
-    # CoinGecko gives volumes as [timestamp, volume]
     volume_df = pd.DataFrame(
         data["total_volumes"],
         columns=["timestamp", "volume"]
     )
 
-    # Convert machine timestamp into readable datetime
-    # unit="ms" means timestamp is in milliseconds
     price_df["date"] = pd.to_datetime(
         price_df["timestamp"],
         unit="ms"
@@ -111,8 +110,6 @@ def get_coin_data(coin_id="bitcoin", days=30):
         unit="ms"
     )
 
-    # Merge price and volume together by date
-    # Keep only the clean columns we need
     df = pd.merge(
         price_df[["date", "price"]],
         volume_df[["date", "volume"]],
